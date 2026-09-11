@@ -1,0 +1,21 @@
+# Виртуальное окружение
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Секреты
+.env
+
+# Временные файлы
+temp_image.jpg
+bot.log
+data/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
