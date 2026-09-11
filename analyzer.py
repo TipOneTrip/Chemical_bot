@@ -1,6 +1,5 @@
 import logging
 from typing import Dict, List
-import base64
 
 # Импортируем только основной класс. Никаких сложных объектов Messages!
 from gigachat import GigaChat
@@ -10,21 +9,18 @@ logger = logging.getLogger(__name__)
 
 class AIAnalyzer:
     def __init__(self, credentials: str):
-        # 1. Жесткая очистка от ЛЮБЫХ пробелов, кавычек и переносов строк
-        raw_credentials = credentials.strip().replace('"', '').replace("'", "").replace(" ", "").replace("\n", "").replace("\r", "")
+        # Очищаем ключ от любых случайных пробелов или переносов строк
+        self.credentials = credentials.strip().replace(" ", "").replace("\n", "").replace("\r", "")
+        logger.info("Инициализирую GigaChat SDK (строго по документации)...")
         
-        # 2. Явное кодирование в Base64 (это то, что требует современный SDK)
-        encoded_credentials = base64.b64encode(raw_credentials.encode('utf-8')).decode('utf-8')
-        
-        logger.info("Инициализирую GigaChat SDK с Base64 ключом...")
-        
-        # 3. Передаем в SDK именно ЗАКОДИРОВАННЫЙ ключ
+        # ВАЖНО: base_url должен быть именно таким, как в официальной документации!
+        # Это автоматически направляет запросы на правильный сервер и избегает ошибки 400 SynGX
         self.giga = GigaChat(
-            credentials=encoded_credentials,
+            credentials=self.credentials,
             base_url="https://api.giga.chat/v1",
             scope="GIGACHAT_API_PERS",
-            verify_ssl_certs=False,
-            model="GigaChat-2"
+            model="GigaChat-2",
+            verify_ssl_certs=False
         )
         logger.info("GigaChat SDK инициализирован успешно!")
 
