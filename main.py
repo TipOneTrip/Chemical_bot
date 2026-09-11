@@ -147,3 +147,25 @@ if __name__ == '__main__':
     
     # Запуск прослушивания сообщений
     vk_bot.listen(handle_user_message)
+
+    # === HTTP-сервер для health-check от Render ===
+from flask import Flask
+from threading import Thread
+
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Bot is running!", 200
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# Запускаем Flask в отдельном потоке
+if __name__ == '__main__':
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Запускаем бота
+    vk_bot.listen(handle_user_message)
