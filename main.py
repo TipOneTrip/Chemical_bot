@@ -1,9 +1,10 @@
+import os
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
+from threading import Thread
+from flask import Flask
 
-# Импортируем только то, что действительно нужно из bot
 from bot import VKBot, get_main_keyboard
-
 from config import VK_TOKEN, VK_GROUP_ID, GIGACHAT_TOKEN, TARGET_URL, ADMIN_USER_ID
 from scraper import ChemicalParser
 from analyzer import AIAnalyzer
@@ -12,10 +13,7 @@ from utils import DataStorage
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
@@ -23,11 +21,11 @@ vk_bot = None
 
 
 def send_scheduled_report():
-    """Автоматическая отправка отчёта по расписанию (по умолчанию)"""
+    """Автоматическая отправка отчёта по расписанию"""
     logger.info("🕒 Запуск планового сбора данных...")
     try:
         parser = ChemicalParser(TARGET_URL)
-        scraped_data = parser.collect_data()  # Без запроса - парсит основную страницу
+        scraped_data = parser.collect_data()
         
         if 'error' in scraped_data:
             vk_bot.send_message(ADMIN_USER_ID, f"❌ Ошибка планового сбора: {scraped_data['error']}")
@@ -50,43 +48,33 @@ def send_scheduled_report():
 
 
 def run_analysis(user_id: int, search_query: str = None):
-    """
-    Универсальная функция анализа.
-    Если search_query=None - парсит основную страницу.
-    Если search_query="серебро" - ищет товары со словом "серебро".
-    """
+    """Универсальная функция анализа"""
     try:
-        # 1. Сообщение о начале работы
         if search_query:
             vk_bot.send_message(user_id, f"🔄 Ищу товары по запросу «{search_query}», подождите немного...")
         else:
             vk_bot.send_message(user_id, "🔄 Собираю данные с сайта, подождите немного...")
         
-        # 2. Парсинг
         parser = ChemicalParser(TARGET_URL)
         scraped_data = parser.collect_data(search_query=search_query)
         
         if 'error' in scraped_data:
-            vk_bot.send_message(user_id, f"❌ Ошибка: {scraped_data['error']}")
+            vk_bot.send_message(user_id, f" Ошибка: {scraped_data['error']}")
             return
         
-        # 3. Проверка: нашлись ли товары
         if not scraped_data.get('products'):
             if search_query:
-                vk_bot.send_message(user_id, f"😔 По запросу «{search_query}» ничего не найдено. Попробуйте другое название.")
+                vk_bot.send_message(user_id, f"😔 По запросу «{search_query}» ничего не найдено.")
             else:
                 vk_bot.send_message(user_id, "😔 На странице не найдено товаров.")
             return
         
-        # 4. Сохранение
         storage = DataStorage()
         storage.save_data(scraped_data)
         
-        # 5. AI анализ
         analyzer = AIAnalyzer(GIGACHAT_TOKEN)
         report = analyzer.analyze(scraped_data)
         
-        # 6. Формирование и отправка отчёта
         image_path = scraped_data.get('image_path')
         
         if search_query:
@@ -109,19 +97,15 @@ def handle_user_message(user_id: int, message: str):
     
     text = message.strip().lower()
     
-    # 1. Команды и тексты кнопок для полного анализа
     if text in ['/анализ', '/analyse', 'анализ', '📊 анализ каталога']:
         run_analysis(user_id, search_query=None)
         
-    # 2. Быстрый поиск по кнопке или команде
     elif text in ['/анализ серебро', '🔍 поиск: серебро']:
         run_analysis(user_id, search_query="серебро")
         
-    # 3. Помощь
     elif text in ['/помощь', '/help', '/начать', '/start', '❓ помощь']:
         vk_bot.send_welcome(user_id)
         
-    # 4. Статус
     elif text in ['/статус', '/status', '⚙️ статус']:
         vk_bot.send_message(
             user_id, 
@@ -129,43 +113,46 @@ def handle_user_message(user_id: int, message: str):
             keyboard=get_main_keyboard()
         )
         
-    # 5. ЛЮБОЕ другое сообщение считаем поисковым запросом! 
-    # Это позволяет пользователю просто написать "кислота" без слова /анализ
     else:
         run_analysis(user_id, search_query=message.strip())
 
+
+# ==================== ГЛАВНЫЙ БЛОК ====================
 if __name__ == '__main__':
     logger.info("🚀 Запуск бота...")
     
+    # 1. Инициализируем бота
     vk_bot = VKBot(VK_TOKEN, VK_GROUP_ID)
     
-    # === БОНУС: Настройка расписания ===
+    # 2. Настраиваем планировщик
     scheduler = BackgroundScheduler()
     scheduler.add_job(send_scheduled_report, 'cron', hour=9, minute=0)
     scheduler.start()
     logger.info("⏰ Планировщик задач запущен (ежедневно в 09:00)")
     
-    # Запуск прослушивания сообщений
-    vk_bot.listen(handle_user_message)
-
-    # === HTTP-сервер для health-check от Render ===
-from flask import Flask
-from threading import Thread
-
-app = Flask(__name__)
-
-@app.route('/')
-def health_check():
-    return "Bot is running!", 200
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-# Запускаем Flask в отдельном потоке
-if __name__ == '__main__':
+    # 3. === ЗАПУСКАЕМ FLASK ПЕРЕД БОТОМ ===
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def health_check():
+        return "Bot is alive and running! 🤖", 200
+    
+    @app.route('/health')
+    def health():
+        return {"status": "healthy", "bot": "running"}, 200
+    
+    def run_flask():
+        # Render передает порт в переменной PORT
+        port = int(os.environ.get('PORT', 8080))
+        # host='0.0.0.0' КРИТИЧЕСКИ важен для Render!
+        app.run(host='0.0.0.0', port=port, threaded=True)
+    
+    # Запускаем Flask в отдельном потоке
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
+    logger.info(f"🌐 Health-check сервер запущен на порту {os.environ.get('PORT', 8080)}")
     
-    # Запускаем бота
+    # 4. Только ПОСЛЕ запуска Flask запускаем бота
+    logger.info("🤖 Запуск VK LongPoll...")
     vk_bot.listen(handle_user_message)
