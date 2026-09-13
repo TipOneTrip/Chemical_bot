@@ -3,8 +3,13 @@ from bs4 import BeautifulSoup
 import re
 from typing import List, Dict, Optional
 import logging
+import time
 from urllib.parse import urljoin, quote_plus
 from datetime import datetime
+
+# Отключаем предупреждения о небезопасных SSL-запросах
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,18 +26,51 @@ class ChemicalParser:
     def fetch_page(self, url: str = None) -> Optional[str]:
         """Получает HTML страницы"""
         target_url = url or self.url
+        
+        # Более реалистичные заголовки
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0'
+        }
+        
         try:
-            response = self.session.get(target_url, timeout=15)
+            # Добавляем небольшую задержку для реалистичности
+            time.sleep(0.5)
+            
+            # ОТКЛЮЧАЕМ ПРОВЕРКУ SSL (verify=False)
+            response = self.session.get(target_url, headers=headers, timeout=15, verify=False)
             response.raise_for_status()
             logger.info(f"Страница успешно получена: {target_url}")
             return response.text
-        except requests.RequestException as e:
+            
+        except requests.exceptions.SSLError as e:
+            logger.warning(f"SSL ошибка (сертификат истек), продолжаем без проверки: {e}")
+            try:
+                response = self.session.get(target_url, headers=headers, timeout=15, verify=False)
+                response.raise_for_status()
+                logger.info(f"Страница успешно получена (без проверки SSL): {target_url}")
+                return response.text
+            except Exception as e2:
+                logger.error(f"Ошибка при получении страницы (повторная попытка): {e2}")
+                return None
+                
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Таймаут при получении страницы: {e}")
+            return None
+        except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка при получении страницы: {e}")
             return None
     
     def search_products(self, query: str) -> str:
         """Формирует URL поиска товаров по запросу"""
-        # WooCommerce использует параметр ?s=запрос&post_type=product
         encoded_query = quote_plus(query)
         search_url = f"https://lenreactiv-shop.ru/?s={encoded_query}&post_type=product"
         logger.info(f"Ищем товары по запросу: {query}")
@@ -100,7 +138,7 @@ class ChemicalParser:
         if not image_url:
             return None
         try:
-            response = self.session.get(image_url, timeout=10)
+            response = self.session.get(image_url, timeout=10, verify=False)
             response.raise_for_status()
             with open(save_path, 'wb') as f:
                 f.write(response.content)
@@ -136,7 +174,7 @@ class ChemicalParser:
         
         return {
             'url': target_url,
-            'search_query': search_query,  # Добавляем запрос для контекста
+            'search_query': search_query,
             'products': products,
             'total_items': len(products),
             'image_path': image_path,
